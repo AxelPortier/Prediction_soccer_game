@@ -63,7 +63,7 @@ for i, v in enumerate(values):
     plt.text(i, v + 5, str(v), ha="center", fontsize=12, fontweight="bold")  # Texte
     plt.plot([i - 0.2, i + 0.2], [v, v], color="black", linewidth=2)  # Petit trait
 
-plt.xlabel("Match Outcome")
+plt.xlabel("Match Outcome at home")
 plt.ylabel("Count")
 plt.title("Match Results Distribution")
 plt.grid(axis="y")
