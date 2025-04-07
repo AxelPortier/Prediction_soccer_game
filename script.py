@@ -8,6 +8,9 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import os
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.preprocessing import StandardScaler
+
 print("Dossier où Python cherche :", os.getcwd())
 print("Fichiers trouvés :", os.listdir("."))
 #%%
@@ -40,8 +43,10 @@ game_lineups["number"] = game_lineups["number"].fillna(0).astype(int)
 # Vérifier le type final
 print(game_lineups.dtypes)
 
+df_all_matches=pd.concat([matchs_2013_2022,match_2023_to_predict],ignore_index=True)
 
-#%%
+#%% WIN/LOOSE
+
 total_matches = len(matchs_2013_2022)
 
 # Calcul du nombre de victoires, nuls et défaites
@@ -73,9 +78,6 @@ print(f"Victoires à domicile : {home_win_rate:.2f}%")
 print(f"Victoires à l'extérieur : {away_win_rate:.2f}%")
 print(f"Matchs nuls : {draw_rate:.2f}%")
 
-#%%         PreProcessing des DataFrame
-
-df_all_matches=pd.concat([matchs_2013_2022,match_2023_to_predict],ignore_index=True)
 
 #%% Valeur de chaque equipe 
 
@@ -104,6 +106,8 @@ df_all_matches = df_all_matches.loc[:, ~df_all_matches.columns.duplicated()]
 
 df_all_matches["value_diff"] = (df_all_matches["home_team_value"].fillna(0).astype(float) 
                                - df_all_matches["away_team_value"].fillna(0).astype(float))
+df_all_matches["value_diff_ratio"] = (df_all_matches["home_team_value"].fillna(0).astype(float) 
+                               / df_all_matches["away_team_value"].fillna(0).astype(float))
 
 df_all_matches.head()
 #%%             Impacte du team_value sur le nombre de victoires 
@@ -134,16 +138,44 @@ plt.legend(title="Saison", bbox_to_anchor=(1.05, 1), loc="upper left")
 plt.xscale("log")  # Pour une meilleure répartition
 plt.show()
 
+#%%     last_5_matchs à domicile
+nb_jours_rolling=5
 
+# On traite d'abord les matchs à domicile
+home = df_all_matches[["home_club_id", "season", "date", "results"]].copy()
+home = home.sort_values(by=["home_club_id", "season", "date"])
+home["points"] = home["results"].map({1: 3, 0: 1, -1: 0})  # si tu utilises 2 au lieu de -1 pour défaites
+home["home_streak_points"] = home.groupby("home_club_id")["points"].rolling(window=5, min_periods=1).sum().reset_index(level=0, drop=True)
+home["home_streak_results"] = home.groupby("home_club_id")["results"].rolling(window=5, min_periods=1).sum().reset_index(level=0, drop=True)
+
+df_all_matches = df_all_matches.merge(
+    home[["home_club_id", "season", "date", "home_streak_points", "home_streak_results"]],
+    how="left",
+    left_on=["home_club_id", "season", "date"],
+    right_on=["home_club_id", "season", "date"]
+)
+#%%     last_5_matchs à l'extèrieur
+
+away = df_all_matches[["away_club_id", "season", "date", "results"]].copy()
+away = away.sort_values(by=["away_club_id", "season", "date"])
+away["points"] = away["results"].map({1: 3, 0: 1, -1: 0})  # Inversé pour l'extérieur
+away["away_streak_points"] = away.groupby("away_club_id")["points"].rolling(window=5, min_periods=1).sum().reset_index(level=0, drop=True)
+away["away_streak_results"] = away.groupby("away_club_id")["results"].rolling(window=5, min_periods=1).sum().reset_index(level=0, drop=True)
+
+df_all_matches = df_all_matches.merge(
+    away[["away_club_id", "season", "date", "away_streak_points", "away_streak_results"]],
+    how="left",
+    left_on=["away_club_id", "season", "date"],
+    right_on=["away_club_id", "season", "date"]
+)
+
+#%%     rank_diff
+
+df_all_matches["rank_diff"]=df_all_matches["home_club_position"]-df_all_matches["away_club_position"]
 
 #%%
 
 
-
-home_last_5_wins
-away_last_5_wins
-home_last_5_points
-away_last_5_points
 home_win_rate_season
 away_win_rate_season
 rank_diff
@@ -158,7 +190,8 @@ def prepare_data(df):
     # Remplacer les valeurs -1 par 2 pour XGBoost
     df["results"] = df["results"].replace(-1, 2)
     
-    features = ["home_team_value", "away_team_value","value_diff", "season"]
+    features = ["home_team_value", "away_team_value","value_diff", "value_diff_ratio", "season", 
+                "home_streak_results", "home_streak_points","away_streak_results", "away_streak_points", "rank_diff"]
     X = df[features]
     y = df["results"]
     
@@ -198,5 +231,40 @@ X_train, y_train, X_test, y_test = prepare_data(df_all_matches)
 model = train_xgboost(X_train, y_train, X_test, y_test)
 accuracy = evaluate_model(model, X_test, y_test)
 
+ConfusionMatrixDisplay.from_estimator(model, X_test, y_test)
 
+#%%
 
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+
+# Features et labels
+X = df_all_matches[[
+    "home_team_value", "away_team_value","value_diff", "value_diff_ratio", "season", 
+    "home_streak_results", "home_streak_points",
+    "away_streak_results", "away_streak_points", "rank_diff"
+]]
+y = df_all_matches["results"]
+
+# Filtrage sur saisons (comme dans XGBoost)
+X_train = X[df_all_matches["season"].between(2013, 2020)]
+X_test = X[df_all_matches["season"].between(2021, 2022)]
+y_train = y[df_all_matches["season"].between(2013, 2020)]
+y_test = y[df_all_matches["season"].between(2021, 2022)]
+X_train = X_train.fillna(0)
+X_test = X_test.fillna(0)
+
+# Standardisation des features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Modèle SVM Classifier
+model = SVC(kernel='rbf')  # SVC = classifier
+model.fit(X_train_scaled, y_train)
+
+# Évaluation
+y_pred = model.predict(X_test_scaled)
+print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
