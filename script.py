@@ -191,7 +191,8 @@ def prepare_data(df):
     df["results"] = df["results"].replace(-1, 2)
     
     features = ["home_team_value", "away_team_value","value_diff", "value_diff_ratio", "season", 
-                "home_streak_results", "home_streak_points","away_streak_results", "away_streak_points", "rank_diff"]
+                "home_streak_results", "home_streak_points","away_streak_results", "away_streak_points", 
+                "rank_diff"]
     X = df[features]
     y = df["results"]
     
@@ -268,3 +269,5 @@ model.fit(X_train_scaled, y_train)
 # Évaluation
 y_pred = model.predict(X_test_scaled)
 print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+
+ConfusionMatrixDisplay.from_estimator(model, X_test, y_test)
